@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Self-Modifying Engine v4 — Live Registrar</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Syne:wght@400;700;800&display=swap');
+  :root {
+    --bg: #0a0a0f; --panel: #0f0f18; --border: #1e1e2e;
+    --accent: #e85d26; --accent2: #26a6e8; --green: #26e87a;
+    --text: #d4eeff; --dim: #7aaacf;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono',monospace; min-height:100vh; padding:40px 20px; }
+  header { text-align:center; margin-bottom:40px; }
+  .label { font-size:11px; letter-spacing:4px; color:var(--accent); text-transform:uppercase; margin-bottom:10px; }
+  h1 { font-family:'Syne',sans-serif; font-size:clamp(24px,5vw,44px); font-weight:800; color:#fff; }
+  h1 span { color:var(--accent); }
+  .subtitle { margin-top:10px; font-size:12px; color:var(--dim); max-width:640px; margin-inline:auto; line-height:1.7; }
+
+  .container { max-width:960px; margin:0 auto; display:grid; gap:20px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:24px; }
+  .panel-title { font-size:11px; letter-spacing:3px; color:var(--dim); text-transform:uppercase; margin-bottom:18px; display:flex; align-items:center; gap:8px; }
+  .panel-title::after { content:''; flex:1; height:1px; background:var(--border); }
+
+  /* Registrar status bar */
+  .reg-bar {
+    display:flex; align-items:center; gap:12px;
+    background:var(--bg); border:1px solid var(--border);
+    border-radius:6px; padding:10px 16px; margin-bottom:20px;
+    font-size:12px;
+  }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--dim); flex-shrink:0; }
+  .dot.green { background:var(--green); box-shadow:0 0 8px var(--green); }
+  .dot.orange { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  .reg-url { color:var(--accent2); flex:1; }
+  .reg-stat { color:var(--dim); font-size:11px; }
+
+  .controls { display:grid; grid-template-columns:1fr auto auto; gap:12px; align-items:end; }
+  .field label { display:block; font-size:11px; color:var(--dim); margin-bottom:6px; }
+  .field input { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:10px 14px; color:#fff; font-family:'JetBrains Mono',monospace; font-size:14px; outline:none; }
+  .field input:focus { border-color:var(--accent2); }
+  button { background:var(--accent); color:#fff; border:none; border-radius:4px; padding:10px 20px; font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; letter-spacing:2px; text-transform:uppercase; cursor:pointer; white-space:nowrap; transition:opacity 0.2s; }
+  button:hover { opacity:0.85; }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  button.sec { background:transparent; border:1px solid var(--border); color:var(--dim); }
+  button.sec:hover { border-color:var(--accent2); color:var(--accent2); }
+
+  /* Flow diagram */
+  .flow {
+    display:flex; align-items:stretch; gap:0;
+    margin-bottom:20px; overflow-x:auto;
+  }
+  .flow-node {
+    flex:1; min-width:120px;
+    background:var(--bg); border:1px solid var(--border);
+    border-radius:6px; padding:12px; text-align:center;
+    transition:all 0.3s;
+  }
+  .flow-node.active { border-color:var(--accent2); }
+  .flow-node.done   { border-color:var(--green); }
+  .flow-node.error  { border-color:var(--accent); }
+  .flow-arrow { display:flex; align-items:center; padding:0 8px; color:var(--dim); font-size:18px; }
+  .fn-label { font-size:9px; letter-spacing:2px; color:var(--dim); margin-bottom:4px; }
+  .fn-value { font-size:11px; color:var(--text); word-break:break-all; min-height:16px; }
+  .fn-value.green { color:var(--green); }
+  .fn-value.orange { color:var(--accent); }
+  .fn-value.blue { color:var(--accent2); }
+
+  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+
+  .wat-view {
+    background:var(--bg); border:1px solid var(--border); border-radius:6px;
+    padding:14px; font-size:11px; line-height:2; max-height:160px;
+    overflow-y:auto; white-space:pre; overflow-x:auto;
+  }
+  .wat-kw { color:var(--accent2); }
+  .wat-num { color:#e8c026; }
+  .wat-cmt { color:#3a5a4a; }
+  .wat-op { color:var(--green); }
+
+  .output-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  .out-box { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:14px; }
+  .out-label { font-size:10px; color:var(--dim); letter-spacing:2px; text-transform:uppercase; margin-bottom:6px; }
+  .out-value { font-size:16px; font-weight:700; font-family:'Syne',sans-serif; word-break:break-all; }
+  .out-value.green { color:var(--green); }
+  .out-value.orange { color:var(--accent); }
+  .out-value.blue { color:var(--accent2); font-size:12px; }
+
+  .verify-row { display:flex; align-items:center; gap:12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:12px 16px; margin-top:12px; }
+  .vl { font-size:11px; color:var(--dim); min-width:120px; }
+  .vv { font-size:12px; color:var(--text); flex:1; }
+  .badge-ok   { background:rgba(38,232,122,0.15); color:var(--green); padding:3px 10px; border-radius:3px; font-size:11px; font-weight:700; }
+  .badge-fail { background:rgba(232,93,38,0.15); color:var(--accent); padding:3px 10px; border-radius:3px; font-size:11px; font-weight:700; }
+
+  .log { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:14px; height:220px; overflow-y:auto; font-size:12px; line-height:1.9; }
+  .le { color:var(--dim); }
+  .le .ts { color:var(--accent2); margin-right:8px; }
+  .le.hi { color:var(--text); }
+  .le.ok .ts { color:var(--green); }
+  .le.warn .ts { color:var(--accent); }
+  .le .net { color:#e8c026; margin-right:6px; }
+
+  @media(max-width:640px) {
+    .controls,.two-col,.output-grid { grid-template-columns:1fr; }
+    .flow { flex-direction:column; }
+    .flow-arrow { transform:rotate(90deg); justify-content:center; }
+  }
+</style>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-TRP1QX4878"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-TRP1QX4878');</script>
+</head>
+<body>
+
+<header>
+  <div class="label">Uncloned Math — PoC v0.4</div>
+  <h1>Self-Modifying <span>Engine</span></h1>
+  <p class="subtitle">
+    Client ↔ Live Registrar on Render.<br>
+    Seed issued over network. Wasm generated in browser. Result verified server-side independently.
+  </p>
+</header>
+
+<div class="container">
+
+  <!-- Registrar status -->
+  <div class="panel">
+    <div class="panel-title">Registrar Connection</div>
+    <div class="reg-bar">
+      <div class="dot" id="regDot"></div>
+      <span class="reg-url">https://registrar-server.onrender.com</span>
+      <span class="reg-stat" id="regStat">checking...</span>
+    </div>
+    <div class="controls">
+      <div class="field">
+        <label>Game Seed (your input — server never sees Wasm)</label>
+        <input type="number" id="gameSeed" value="42" min="0">
+      </div>
+      <button onclick="runSession()" id="btnRun">▶ RUN SESSION</button>
+      <button class="sec" onclick="randomSession()">⟳ RANDOM</button>
+    </div>
+  </div>
+
+  <!-- Protocol flow -->
+  <div class="panel">
+    <div class="panel-title">Protocol Flow</div>
+    <div class="flow">
+      <div class="flow-node" id="fn-client">
+        <div class="fn-label">CLIENT</div>
+        <div class="fn-value" id="fv-client">ready</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node" id="fn-req">
+        <div class="fn-label">1. REQUEST SESSION</div>
+        <div class="fn-value" id="fv-req">gameSeed →</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node" id="fn-reg">
+        <div class="fn-label">REGISTRAR</div>
+        <div class="fn-value blue" id="fv-reg">registrar-server.onrender.com</div>
+      </div>
+      <div class="flow-arrow">←</div>
+      <div class="flow-node" id="fn-seed">
+        <div class="fn-label">2. SEED ISSUED</div>
+        <div class="fn-value orange" id="fv-seed">← regSeed</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node" id="fn-wasm">
+        <div class="fn-label">3. BUILD + RUN WASM</div>
+        <div class="fn-value" id="fv-wasm">client only</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node" id="fn-verify">
+        <div class="fn-label">4. VERIFY</div>
+        <div class="fn-value green" id="fv-verify">result →</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wasm -->
+  <div class="two-col">
+    <div class="panel">
+      <div class="panel-title">Generated Wasm (wat)</div>
+      <div class="wat-view" id="watView"><span style="color:var(--dim)">; awaiting session seed from Registrar...</span></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Session Output</div>
+      <div class="output-grid" style="grid-template-columns:1fr 1fr">
+        <div class="out-box">
+          <div class="out-label">Reg Seed (from server)</div>
+          <div class="out-value orange" id="outRegSeed">—</div>
+        </div>
+        <div class="out-box">
+          <div class="out-label">Session ID</div>
+          <div class="out-value blue" id="outSessionId">—</div>
+        </div>
+        <div class="out-box">
+          <div class="out-label">Wasm Result</div>
+          <div class="out-value" style="color:var(--text)" id="outResult">—</div>
+        </div>
+        <div class="out-box">
+          <div class="out-label">Verification</div>
+          <div class="out-value green" id="outVerify">—</div>
+        </div>
+      </div>
+      <div class="verify-row" id="verifyRow" style="display:none">
+        <span class="vl">Server says</span>
+        <span class="vv" id="verifyMsg">—</span>
+        <span id="verifyBadge">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="panel">
+    <div class="panel-title">Session Log</div>
+    <div class="log" id="log">
+      <div class="le"><span class="ts">SYS</span>v0.4 — Live Registrar mode. Connecting...</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const REGISTRAR = 'https://registrar-server.onrender.com';
+
+// ============================================================
+// LCG + Wasm builder (same as v3)
+// ============================================================
+class LCG {
+  constructor(seed) { this.s = seed >>> 0; }
+  next() { this.s = (Math.imul(this.s, 1664525) + 1013904223) >>> 0; return this.s; }
+  range(lo, hi) { return lo + (this.next() % (hi - lo)); }
+}
+
+const BINARY_OPS = [0x6a,0x6b,0x6c,0x73]; // add,sub,mul,xor
+const SHIFT_OPS  = [0x76,0x77,0x78];       // shr_u, rotl, rotr — no shl
+const OP_NAMES   = {0x6a:'i32.add',0x6b:'i32.sub',0x6c:'i32.mul',0x71:'i32.and',0x72:'i32.or',0x73:'i32.xor',0x74:'i32.shl',0x76:'i32.shr_u',0x77:'i32.rotl',0x78:'i32.rotr'};
+
+function uleb128(n) {
+  const o=[];
+  do { let b=n&0x7f; n>>>=7; if(n) b|=0x80; o.push(b); } while(n);
+  return o;
+}
+function sleb128(n) {
+  n=n|0; const o=[]; let more=true;
+  while(more) {
+    let b=n&0x7f; n>>=7;
+    if((n===0&&!(b&0x40))||(n===-1&&(b&0x40))) more=false; else b|=0x80;
+    o.push(b);
+  }
+  return o;
+}
+
+function buildWasm(regSeed) {
+  const lcg = new LCG(regSeed);
+  const n   = lcg.range(4,7);
+  const steps = Array.from({length:n}, () => ({
+    shiftOp:  SHIFT_OPS[lcg.range(0,SHIFT_OPS.length)],
+    shiftAmt: 8 + lcg.range(0,8), // min 8 bits
+    binOp:    BINARY_OPS[lcg.range(0,BINARY_OPS.length)],
+    constVal: (lcg.next()|1)|0,
+  }));
+
+  const body = [0x00, 0x20, 0x00];
+  for (const s of steps) {
+    body.push(0x41, ...sleb128(s.shiftAmt));
+    body.push(s.shiftOp);
+    body.push(0x41, ...sleb128(s.constVal));
+    body.push(s.binOp);
+  }
+  body.push(0x0b);
+
+  const typeBody   = [0x01,0x60,0x01,0x7f,0x01,0x7f];
+  const typeSec    = [0x01,...uleb128(typeBody.length),...typeBody];
+  const funcBody   = [0x01,0x00];
+  const funcSec    = [0x03,...uleb128(funcBody.length),...funcBody];
+  const expName    = Array.from('compute').map(c=>c.charCodeAt(0));
+  const expBody    = [0x01,...uleb128(expName.length),...expName,0x00,0x00];
+  const expSec     = [0x07,...uleb128(expBody.length),...expBody];
+  const bodyWLen   = [...uleb128(body.length),...body];
+  const codeBody   = [0x01,...bodyWLen];
+  const codeSec    = [0x0a,...uleb128(codeBody.length),...codeBody];
+
+  return {
+    bytes: new Uint8Array([0x00,0x61,0x73,0x6d,0x01,0x00,0x00,0x00,...typeSec,...funcSec,...expSec,...codeSec]),
+    steps
+  };
+}
+
+function toWat(steps) {
+  let L = [];
+  L.push(`<span class="wat-cmt">;; Session Wasm — generated from Registrar seed</span>`);
+  L.push(`<span class="wat-kw">(func</span> (export <span class="wat-num">"compute"</span>) <span class="wat-kw">(param</span> i32<span class="wat-kw">)</span> <span class="wat-kw">(result</span> i32<span class="wat-kw">)</span>`);
+  L.push(`  <span class="wat-op">local.get</span> 0`);
+  steps.forEach((s,i) => {
+    L.push(`  <span class="wat-cmt">;; step ${i+1}</span>`);
+    L.push(`  <span class="wat-op">i32.const</span> <span class="wat-num">${s.shiftAmt}</span>`);
+    L.push(`  <span class="wat-op">${OP_NAMES[s.shiftOp]}</span>`);
+    L.push(`  <span class="wat-op">i32.const</span> <span class="wat-num">0x${(s.constVal>>>0).toString(16).toUpperCase()}</span>`);
+    L.push(`  <span class="wat-op">${OP_NAMES[s.binOp]}</span>`);
+  });
+  L.push(`<span class="wat-kw">)</span>`);
+  return L.join('\n');
+}
+
+// ============================================================
+// UI helpers
+// ============================================================
+let sessionCount = 0;
+
+function log(msg, type='') {
+  const el = document.getElementById('log');
+  const ts = new Date().toISOString().substr(11,12);
+  const e  = document.createElement('div');
+  e.className = 'le ' + type;
+  e.innerHTML = `<span class="ts">${ts}</span>${msg}`;
+  el.appendChild(e); el.scrollTop = el.scrollHeight;
+}
+
+function netlog(msg) {
+  const el = document.getElementById('log');
+  const ts = new Date().toISOString().substr(11,12);
+  const e  = document.createElement('div');
+  e.className = 'le';
+  e.innerHTML = `<span class="ts">${ts}</span><span class="net">↕ NET</span>${msg}`;
+  el.appendChild(e); el.scrollTop = el.scrollHeight;
+}
+
+function flowSet(id, cls, val) {
+  const n = document.getElementById('fn-'+id);
+  const v = document.getElementById('fv-'+id);
+  if (n) { n.className = 'flow-node ' + cls; }
+  if (v && val !== undefined) v.textContent = val;
+}
+
+// ============================================================
+// Registrar status check
+// ============================================================
+async function checkRegistrar() {
+  try {
+    const r = await fetch(REGISTRAR + '/status', {signal: AbortSignal.timeout(5000)});
+    const d = await r.json();
+    document.getElementById('regDot').className  = 'dot green';
+    document.getElementById('regStat').textContent = `online | sessions: ${d.activeSessions} | uptime: ${d.uptime}`;
+    log('Registrar online ✓', 'ok');
+  } catch(e) {
+    document.getElementById('regDot').className  = 'dot orange';
+    document.getElementById('regStat').textContent = 'offline or cold start (~30s)';
+    log('Registrar unreachable — may be cold starting', 'warn');
+  }
+}
+
+// ============================================================
+// MAIN SESSION
+// ============================================================
+async function runSession() {
+  const gameSeed = parseInt(document.getElementById('gameSeed').value) >>> 0;
+  sessionCount++;
+  document.getElementById('btnRun').disabled = true;
+
+  log(`── Session #${sessionCount} ──`, 'hi');
+  flowSet('client','active','running...');
+
+  // Step 1: Request session from Registrar
+  flowSet('req','active','POST /session/new');
+  netlog(`POST ${REGISTRAR}/session/new  {gameSeed: ${gameSeed}}`);
+
+  let sessionId, regSeed;
+  try {
+    const t0 = performance.now();
+    const r = await fetch(REGISTRAR + '/session/new', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({gameSeed}),
+    });
+    const d = await r.json();
+    const dt = (performance.now()-t0).toFixed(0);
+    sessionId = d.sessionId;
+    regSeed   = d.regSeed;
+    netlog(`← {sessionId: "${sessionId}", regSeed: ${regSeed}} [${dt}ms]`);
+    flowSet('req','done','✓ session issued');
+    flowSet('seed','done','regSeed: 0x'+regSeed.toString(16).toUpperCase());
+    log(`Session issued: ${sessionId}`);
+    document.getElementById('outRegSeed').textContent  = '0x'+regSeed.toString(16).toUpperCase();
+    document.getElementById('outSessionId').textContent = sessionId.substr(0,12)+'...';
+  } catch(e) {
+    log('Network error: ' + e.message, 'warn');
+    flowSet('req','error','✗ failed');
+    document.getElementById('btnRun').disabled = false;
+    return;
+  }
+
+  // Step 2: Build Wasm from regSeed (client only — server never sees this)
+  flowSet('wasm','active','building...');
+  const { bytes, steps } = buildWasm(regSeed);
+  document.getElementById('watView').innerHTML = toWat(steps);
+
+  // Compile + run real Wasm
+  const wasmMod  = await WebAssembly.compile(bytes.buffer);
+  const wasmInst = await WebAssembly.instantiate(wasmMod);
+  const result   = wasmInst.exports.compute(gameSeed) >>> 0;
+  const hexResult = '0x' + result.toString(16).toUpperCase().padStart(8,'0');
+
+  log(`Wasm compiled (${bytes.length}B, ${steps.length} steps) → result: ${hexResult}`);
+  flowSet('wasm','done','result: '+hexResult);
+  document.getElementById('outResult').textContent = hexResult;
+
+  // Step 3: Send result to Registrar for verification
+  flowSet('verify','active','verifying...');
+  netlog(`POST ${REGISTRAR}/session/verify  {sessionId, result: ${result}}`);
+
+  try {
+    const t1 = performance.now();
+    const r2 = await fetch(REGISTRAR + '/session/verify', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({sessionId, regSeed, gameSeed, result}),
+    });
+    const d2 = await r2.json();
+    const dt2 = (performance.now()-t1).toFixed(0);
+    netlog(`← {ok: ${d2.ok}} [${dt2}ms]`);
+
+    document.getElementById('verifyRow').style.display = 'flex';
+
+    if (d2.ok) {
+      flowSet('verify','done','✓ VERIFIED');
+      flowSet('client','done','session complete');
+      document.getElementById('outVerify').textContent = 'VERIFIED ✓';
+      document.getElementById('outVerify').style.color = 'var(--green)';
+      document.getElementById('verifyMsg').textContent = 'Registrar independently computed same result';
+      document.getElementById('verifyBadge').innerHTML = '<span class="badge-ok">✓ VERIFIED</span>';
+      log('Registrar: VERIFIED ✓', 'ok');
+    } else {
+      flowSet('verify','error','✗ REJECTED');
+      flowSet('client','error','rejected');
+      document.getElementById('outVerify').textContent = 'REJECTED ✗';
+      document.getElementById('outVerify').style.color = 'var(--accent)';
+      document.getElementById('verifyMsg').textContent = 'Result mismatch — session rejected';
+      document.getElementById('verifyBadge').innerHTML = '<span class="badge-fail">✗ REJECTED</span>';
+      log('Registrar: REJECTED', 'warn');
+    }
+  } catch(e) {
+    log('Verify network error: ' + e.message, 'warn');
+    flowSet('verify','error','✗ network error');
+  }
+
+  document.getElementById('btnRun').disabled = false;
+  // Refresh registrar status
+  checkRegistrar();
+}
+
+function randomSession() {
+  document.getElementById('gameSeed').value = Math.floor(Math.random()*1000000);
+  runSession();
+}
+
+// Init
+checkRegistrar();
+</script>
+</body>
+</html>
