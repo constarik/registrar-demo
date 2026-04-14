@@ -374,10 +374,16 @@ async function runSession() {
     const r = await fetch(REGISTRAR + '/session/new', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({gameSeed}),
+      body: JSON.stringify({gameSeed, versions: [1]}),
     });
     const d = await r.json();
     const dt = (performance.now()-t0).toFixed(0);
+    if (!d.accepted) {
+      log(`Version negotiation failed. Server supports: [${d.serverVersions}]`, 'warn');
+      flowSet('req','error','✗ version mismatch');
+      document.getElementById('btnRun').disabled = false;
+      return;
+    }
     sessionId = d.sessionId;
     regSeed   = d.regSeed;
     netlog(`← {sessionId: "${sessionId}", regSeed: ${regSeed}} [${dt}ms]`);
